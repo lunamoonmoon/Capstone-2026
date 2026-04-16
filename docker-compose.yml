@@ -1,98 +1,117 @@
 # Reusable vars
 x-var:
   - &POSTGRES_USER postgres
-  - &POSTGRES_PASSWORD default
-  - &POSTGRES_DATABASE postgres
-  - &node-image node:22
 
-# Reusable envars for postgres
+# Postgres envars
 x-postgres-vars: &postgres-vars
-  POSTGRES_HOST: database
+  POSTGRES_DATABASE: postgres
+  POSTGRES_HOST: sat-db
+  POSTGRES_PASSWORD: default
   POSTGRES_USER: *POSTGRES_USER
-  POSTGRES_PASSWORD: *POSTGRES_PASSWORD
-  POSTGRES_DATABASE: *POSTGRES_DATABASE
 
+name: Capstone-Project-2026
 services:
+  # DB
   database:
-    image: postgis/postgis:17-3.4 # if using crunchy , make sure to align with crunchy version, currently it is at 16 and postgis 3.3
-    container_name: database
+    build:
+      context: ./database
+      dockerfile: Dockerfile
+    # Don't put an image: prop here, it breaks the local
+    container_name: sat-db
     environment:
       <<: *postgres-vars
+    ports: [5432:5432]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", *POSTGRES_USER]
-    ports: ["5432:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
-  migrations:
-    image: flyway/flyway:12-alpine
-    container_name: migrations
-    command: info migrate info
-    volumes: ["./migrations/sql:/flyway/sql:ro"]
+  # PGAdmin
+  pgadmin:
+    container_name: sat-pgadmin
     environment:
-      FLYWAY_URL: jdbc:postgresql://database:5432/postgres
-      FLYWAY_USER: *POSTGRES_USER
-      FLYWAY_PASSWORD: *POSTGRES_PASSWORD
-      FLYWAY_BASELINE_ON_MIGRATE: true
-      FLYWAY_DEFAULT_SCHEMA: users
+      PGADMIN_DEFAULT_EMAIL: admin@qs.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    image: dpage/pgadmin4
+    ports: [5050:80]
+    profiles: ["pgadmin"]
+
+  # Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sat-api
     depends_on:
       database:
         condition: service_healthy
-
-  schemaspy:
-    image: schemaspy/schemaspy:7.0.2
-    profiles: ["schemaspy"]
-    container_name: schemaspy
-    command: -t pgsql11 -db postgres -host database -port 5432 -u postgres -p default -schemas users
-    depends_on:
-      migrations:
-        condition: service_completed_successfully
-    volumes: ["./output:/output"]
-
-  backend:
-    container_name: backend
-    depends_on:
-      migrations:
-        condition: service_started
-    entrypoint: sh -c "npm i && npm run start:dev"
+    develop:
+     watch:
+       - action: sync
+         path: ./backend/
+         target: /app
+         ignore: [node_modules]
     environment:
-      <<: *postgres-vars
-      NODE_ENV: development
-    image: *node-image
-    ports: ["3001:3000"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api"]
-    working_dir: "/app"
-    volumes: ["./backend:/app", "/app/node_modules"]
-
-  frontend:
-    container_name: frontend
-    entrypoint: sh -c "npm ci --ignore-scripts && npm run dev"
-    environment:
-      BACKEND_URL: http://backend:3000
+      LOG_LEVEL: info
       PORT: 3000
-      NODE_ENV: development
-    image: *node-image
-    ports: ["3000:3000"]
-    volumes: ["./frontend:/app", "/app/node_modules"]
+      <<: *postgres-vars
+      DATABASE_URL: ${DATABASE_URL}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
-    working_dir: "/app"
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    ports: ["3000:3000"]
+    volumes: ["./backend:/app", "/app/node_modules/"]
+    # For debugging
+    stdin_open: true
+    tty: true
+
+  # Frontend
+  frontend:
+    container_name: sat-frontend
+    profiles: ["frontend"]
+    image: node:20.19.2
+    working_dir: /app/frontend
+    command: sh -c "npm ci && npm run dev -- --host"
     depends_on:
       backend:
         condition: service_healthy
+    develop:
+      watch:
+        - action: sync
+          path: ./frontend
+          target: /app
+          ignore: [node_modules]
+    environment:
+      VITE_BACKEND_URL: http://localhost:3000
+    healthcheck:
+      test: curl --fail http://localhost:5173 || exit 1
+    ports: ["5173:5173"]
+    # entrypoint: ls /app
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
 
   caddy:
     container_name: caddy
     profiles: ["caddy"]
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     environment:
       NODE_ENV: development
-      PORT: 3000
-      BACKEND_URL: http://backend:3000
+      PORT: 5173
+      VITE_BACKEND_URL: http://localhost:3000
       LOG_LEVEL: info
-    ports: ["3005:3000"]
+    ports: ["5173:5173"]
     volumes: ["./frontend/Caddyfile:/etc/caddy/Caddyfile"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ["CMD", "curl", "-f", "http://localhost:5173"]
     depends_on:
       backend:
         condition: service_healthy
+
+volumes:
+  postgres_data:

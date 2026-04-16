@@ -1,35 +1,49 @@
-# Build
-FROM node:24.14.1-slim AS build
+# Base image for the container
+FROM node:20.19.2 AS dependencies
 
-# Copy, build static files; see .dockerignore for exclusions
+RUN apt-get update -y && apt-get install -y --no-install-recommends\
+  openssl \
+  curl
+
 WORKDIR /app
-COPY . ./
-ENV PRISMA_CLI_BINARY_TARGETS=debian-openssl-3.0.x
-RUN npm run deploy
 
-# Dependencies
-FROM node:24.14.1-slim AS dependencies
+COPY --chown=node:node package*.json ./
 
-# Copy, build static files; see .dockerignore for exclusions
+RUN npm ci
+
+USER node
+
+FROM node:20.19.2 AS build
+
 WORKDIR /app
-COPY . ./
-ENV PRISMA_CLI_BINARY_TARGETS=debian-openssl-3.0.x
-RUN npm ci --ignore-scripts --no-update-notifier --omit=dev
 
-# Deploy using minimal Distroless image
-FROM gcr.io/distroless/nodejs22-debian12:nonroot
-ENV NODE_ENV=production
+COPY --chown=node:node --from=dependencies /app/node_modules ./node_modules
+COPY --chown=node:node . .
 
-# Copy app and dependencies
+RUN npx prisma generate
+
+RUN npm run build
+
+FROM node:20.19.2-slim AS prod
+
+RUN apt-get update -y && apt-get install -y --no-install-recommends\
+  openssl \
+  curl
 WORKDIR /app
-COPY --from=dependencies /app/node_modules ./node_modules
-COPY --from=build /app/generated ./generated
+
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build /app/node_modules ./node_modules
+COPY prisma ./prisma
+COPY package*.json ./
 
-# Boilerplate, not used in OpenShift/Kubernetes
-EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=3s CMD curl -f http://localhost:3000/api
+# RUN npx prisma migrate deploy
+# CMD ["npm", "run", "serve"]
 
-# Nonroot user, limit heap size to 150 MB
-USER nonroot
-CMD ["--max-old-space-size=150", "/app/dist/main"]
+COPY --chown=node:node start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+USER node
+
+CMD ["sh", "/app/start.sh"]
