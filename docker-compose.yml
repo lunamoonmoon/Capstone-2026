@@ -66,7 +66,7 @@ services:
       retries: 3
       start_period: 40s
     ports: ["3000:3000"]
-    volumes: ["./backend:/app", "/app/node_modules/"]
+    volumes: ["./backend:/app", "/app/node_modules/", "/app/dist/"]
     # For debugging
     stdin_open: true
     tty: true
