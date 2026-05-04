@@ -69,9 +69,6 @@ jobs:
           parameters:
             -p TAG=${{ inputs.tag }} -p TARGET=${{ inputs.target }} -p POSTGRES_PASSWORD=${{
             secrets.POSTGRES_PASSWORD }}
-          verification_path: /api/health
-          verification_retry_attempts: "5"
-          verification_retry_seconds: "15"
 
   frontend:
     name: Frontend

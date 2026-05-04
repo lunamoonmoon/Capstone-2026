@@ -32,14 +32,9 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends\
 WORKDIR /app
 
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules ./node_modules
 COPY prisma ./prisma
 COPY package*.json ./
-
-# RUN npx prisma migrate deploy
-# CMD ["npm", "run", "serve"]
 
 COPY --chown=node:node start.sh /app/start.sh
 RUN chmod +x /app/start.sh
