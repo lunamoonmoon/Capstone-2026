@@ -4,16 +4,16 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - '*.md'
-      - '.github/**'
-      - '.github/graphics/**'
-      - '!.github/workflows/**'
+      - "*.md"
+      - ".github/**"
+      - ".github/graphics/**"
+      - "!.github/workflows/**"
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Image tag set to deploy; e.g. PR number or prod'
-        type: string
-        default: 'prod'
+      pr_no:
+        description: "PR-numbered container set to deploy"
+        type: number
+        required: true
 
 concurrency:
   # Do not interrupt previous workflows
@@ -23,52 +23,51 @@ concurrency:
 permissions: {}
 
 jobs:
-  deploy-test:
-    name: Deploy (TEST)
-    uses: ./.github/workflows/.deployer.yml
+  init:
+    name: Set Variables
+    outputs:
+      pr: ${{ steps.pr.outputs.pr }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      # Get PR number for squash merges to main
+      - name: PR Number
+        id: pr
+        uses: bcgov-nr/action-get-pr@v0.0.1
+
+  deploys-test:
+    name: TEST Deploys (${{ needs.init.outputs.pr }})
+    needs: [init]
     secrets: inherit
+    uses: ./.github/workflows/.deploy.yml
     with:
       environment: test
-      db_user: appproxy # appproxy is the user which works with pgbouncer.
-      tag: ${{ inputs.tag }}
-
-  tests:
-    name: Tests
-    needs: [deploy-test]
-    uses: ./.github/workflows/.tests.yml
-    with:
+      tag: ${{ needs.init.outputs.pr }}
       target: test
 
-  # deploy-prod:
-  #   name: Deploy (PROD)
-  #   needs: [tests]
-  #   uses: ./.github/workflows/.deployer.yml
+  # deploy:
+  #   name: Deploy
+  #   needs: [vars]
   #   secrets: inherit
+  #   uses: ./.github/workflows/.deploy.yml
   #   with:
-  #     environment: prod
-  #     db_user: appproxy # appproxy is the user which works with pgbouncer.
-  #     params:
-  #       --set backend.deploymentStrategy=RollingUpdate
-  #       --set frontend.deploymentStrategy=RollingUpdate
-  #       --set global.autoscaling=true
-  #       --set frontend.pdb.enabled=true
-  #       --set backend.pdb.enabled=true
-  #     tag: ${{ inputs.tag }}
+  #     tag: ${{ needs.vars.outputs.pr }}
+  #     target: test
 
   # promote:
   #   name: Promote Images
-  #   needs: [deploy-prod]
-  #   runs-on: ubuntu-slim
+  #   needs: [deploy, vars]
+  #   runs-on: ubuntu-22.04
   #   permissions:
   #     packages: write
   #   strategy:
   #     matrix:
-  #       package: [migrations, backend, frontend]
+  #       package: [database, backend, frontend]
   #   timeout-minutes: 1
   #   steps:
-  #     - uses: shrink/actions-docker-registry-tag@e6aaef25c595b6e0edd18bf4c7dbfea3abd43299 # v5
+  #     - uses: shrink/actions-docker-registry-tag@v4
   #       with:
   #         registry: ghcr.io
   #         repository: ${{ github.repository }}/${{ matrix.package }}
-  #         target: ${{ needs.deploy-prod.outputs.tag }}
+  #         target: ${{ needs.vars.outputs.pr }}
   #         tags: prod
